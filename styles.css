@@ -1,0 +1,667 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  ArrowRightLeft,
+  Check,
+  Clock3,
+  Copy,
+  Globe2,
+  Search,
+  AlertCircle,
+} from 'lucide-react'
+
+const CITY_ALIASES = {
+  sydney: 'Australia/Sydney',
+  melbourne: 'Australia/Melbourne',
+  brisbane: 'Australia/Brisbane',
+  perth: 'Australia/Perth',
+  adelaide: 'Australia/Adelaide',
+  darwin: 'Australia/Darwin',
+  auckland: 'Pacific/Auckland',
+  wellington: 'Pacific/Auckland',
+  christchurch: 'Pacific/Auckland',
+  london: 'Europe/London',
+  paris: 'Europe/Paris',
+  berlin: 'Europe/Berlin',
+  rome: 'Europe/Rome',
+  madrid: 'Europe/Madrid',
+  amsterdam: 'Europe/Amsterdam',
+  zurich: 'Europe/Zurich',
+  athens: 'Europe/Athens',
+  stockholm: 'Europe/Stockholm',
+  oslo: 'Europe/Oslo',
+  copenhagen: 'Europe/Copenhagen',
+  dublin: 'Europe/Dublin',
+  lisbon: 'Europe/Lisbon',
+  prague: 'Europe/Prague',
+  vienna: 'Europe/Vienna',
+  warsaw: 'Europe/Warsaw',
+  budapest: 'Europe/Budapest',
+  istanbul: 'Europe/Istanbul',
+  moscow: 'Europe/Moscow',
+  dubai: 'Asia/Dubai',
+  'abu dhabi': 'Asia/Dubai',
+  doha: 'Asia/Qatar',
+  riyadh: 'Asia/Riyadh',
+  jerusalem: 'Asia/Jerusalem',
+  'tel aviv': 'Asia/Jerusalem',
+  mumbai: 'Asia/Kolkata',
+  delhi: 'Asia/Kolkata',
+  'new delhi': 'Asia/Kolkata',
+  kolkata: 'Asia/Kolkata',
+  bangalore: 'Asia/Kolkata',
+  bengaluru: 'Asia/Kolkata',
+  chennai: 'Asia/Kolkata',
+  hyderabad: 'Asia/Kolkata',
+  karachi: 'Asia/Karachi',
+  dhaka: 'Asia/Dhaka',
+  bangkok: 'Asia/Bangkok',
+  jakarta: 'Asia/Jakarta',
+  singapore: 'Asia/Singapore',
+  'kuala lumpur': 'Asia/Kuala_Lumpur',
+  'hong kong': 'Asia/Hong_Kong',
+  beijing: 'Asia/Shanghai',
+  shanghai: 'Asia/Shanghai',
+  seoul: 'Asia/Seoul',
+  tokyo: 'Asia/Tokyo',
+  osaka: 'Asia/Tokyo',
+  manila: 'Asia/Manila',
+  taipei: 'Asia/Taipei',
+  'new york': 'America/New_York',
+  nyc: 'America/New_York',
+  chicago: 'America/Chicago',
+  denver: 'America/Denver',
+  phoenix: 'America/Phoenix',
+  'los angeles': 'America/Los_Angeles',
+  'san francisco': 'America/Los_Angeles',
+  toronto: 'America/Toronto',
+  vancouver: 'America/Vancouver',
+  montreal: 'America/Toronto',
+  seattle: 'America/Los_Angeles',
+  miami: 'America/New_York',
+  honolulu: 'Pacific/Honolulu',
+  anchorage: 'America/Anchorage',
+  'mexico city': 'America/Mexico_City',
+  'sao paulo': 'America/Sao_Paulo',
+  'rio de janeiro': 'America/Sao_Paulo',
+  'buenos aires': 'America/Argentina/Buenos_Aires',
+  santiago: 'America/Santiago',
+  bogota: 'America/Bogota',
+  lima: 'America/Lima',
+  johannesburg: 'Africa/Johannesburg',
+  'cape town': 'Africa/Johannesburg',
+  cairo: 'Africa/Cairo',
+  nairobi: 'Africa/Nairobi',
+  lagos: 'Africa/Lagos',
+  reykjavik: 'Atlantic/Reykjavik',
+  utc: 'UTC',
+}
+
+function titleCase(value) {
+  return value
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function supportedTimeZones() {
+  try {
+    return Intl.supportedValuesOf('timeZone')
+  } catch {
+    return [
+      'UTC',
+      'America/New_York',
+      'America/Chicago',
+      'America/Denver',
+      'America/Los_Angeles',
+      'Europe/London',
+      'Europe/Paris',
+      'Asia/Tokyo',
+      'Asia/Singapore',
+      'Australia/Sydney',
+      'Pacific/Auckland',
+    ]
+  }
+}
+
+function buildCityOptions() {
+  const map = new Map()
+
+  for (const tz of supportedTimeZones()) {
+    const parts = tz.split('/')
+    const region = titleCase(parts[0].replace(/_/g, ' '))
+    const city = parts.length === 1 ? tz : titleCase(parts[parts.length - 1].replace(/_/g, ' '))
+    const label = parts.length === 1 ? tz : `${city}, ${region}`
+    const key = city.toLowerCase()
+
+    if (!map.has(key)) {
+      map.set(key, { city, label, timeZone: tz, aliases: [key] })
+    }
+  }
+
+  for (const [alias, tz] of Object.entries(CITY_ALIASES)) {
+    const city = tz === 'UTC' ? 'UTC' : titleCase(tz.split('/').at(-1).replace(/_/g, ' '))
+    const region = tz === 'UTC' ? '' : titleCase(tz.split('/')[0].replace(/_/g, ' '))
+    const label = tz === 'UTC' ? 'UTC' : `${city}, ${region}`
+    const key = city.toLowerCase()
+
+    if (!map.has(key)) {
+      map.set(key, { city, label, timeZone: tz, aliases: [key, alias] })
+    } else {
+      const current = map.get(key)
+      current.aliases = [...new Set([...(current.aliases || []), alias])]
+      current.timeZone = current.timeZone || tz
+      map.set(key, current)
+    }
+
+    if (!map.has(alias)) {
+      map.set(alias, { city, label, timeZone: tz, aliases: [alias, key] })
+    }
+  }
+
+  const unique = []
+  const seen = new Set()
+  for (const item of map.values()) {
+    const id = `${item.city}-${item.timeZone}`
+    if (!seen.has(id)) {
+      seen.add(id)
+      unique.push({ ...item, aliases: [...new Set(item.aliases || [])] })
+    }
+  }
+
+  return unique.sort((a, b) => a.city.localeCompare(b.city))
+}
+
+const CITY_OPTIONS = buildCityOptions()
+
+function findCity(input) {
+  const q = input.trim().toLowerCase()
+  if (!q) return null
+
+  return (
+    CITY_OPTIONS.find((item) => item.city.toLowerCase() === q) ||
+    CITY_OPTIONS.find((item) => item.label.toLowerCase() === q) ||
+    CITY_OPTIONS.find((item) => (item.aliases || []).includes(q)) ||
+    CITY_OPTIONS.find((item) => {
+      const fields = [item.city.toLowerCase(), item.label.toLowerCase(), ...(item.aliases || [])]
+      return fields.some((field) => field.includes(q))
+    }) ||
+    null
+  )
+}
+
+function getSuggestions(input, excludeTimeZone) {
+  const q = input.trim().toLowerCase()
+  return CITY_OPTIONS.filter((item) => item.timeZone !== excludeTimeZone)
+    .filter((item) => {
+      if (!q) return true
+      const fields = [item.city.toLowerCase(), item.label.toLowerCase(), ...(item.aliases || [])]
+      return fields.some((field) => field.startsWith(q) || field.includes(q))
+    })
+    .slice(0, 8)
+}
+
+function parseDateTime(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value || '')
+  if (!match) return null
+  const [, year, month, day, hour, minute] = match
+  return {
+    year: Number(year),
+    month: Number(month),
+    day: Number(day),
+    hour: Number(hour),
+    minute: Number(minute),
+  }
+}
+
+function getTimeParts(date, timeZone) {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  })
+
+  const raw = {}
+  for (const part of formatter.formatToParts(date)) {
+    if (part.type !== 'literal') raw[part.type] = part.value
+  }
+
+  return {
+    year: Number(raw.year),
+    month: Number(raw.month),
+    day: Number(raw.day),
+    hour: Number(raw.hour),
+    minute: Number(raw.minute),
+    second: Number(raw.second),
+  }
+}
+
+function getOffsetMinutes(date, timeZone) {
+  const p = getTimeParts(date, timeZone)
+  const utcGuess = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second)
+  return (utcGuess - date.getTime()) / 60000
+}
+
+function zonedDateTimeToUtc(parts, timeZone) {
+  const naiveUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, 0)
+  let guess = new Date(naiveUtc)
+
+  for (let i = 0; i < 5; i += 1) {
+    const offset = getOffsetMinutes(guess, timeZone)
+    const corrected = new Date(naiveUtc - offset * 60000)
+    if (Math.abs(corrected.getTime() - guess.getTime()) < 1000) {
+      guess = corrected
+      break
+    }
+    guess = corrected
+  }
+
+  return guess
+}
+
+function formatOffset(minutes) {
+  const sign = minutes >= 0 ? '+' : '-'
+  const abs = Math.abs(minutes)
+  const hh = String(Math.floor(abs / 60)).padStart(2, '0')
+  const mm = String(abs % 60).padStart(2, '0')
+  return `UTC${sign}${hh}:${mm}`
+}
+
+function formatDateTime(date, timeZone) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(date)
+}
+
+function formatClock(date, timeZone) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  }).format(date)
+}
+
+function getZoneName(date, timeZone) {
+  const zoneName = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: 'numeric',
+    timeZoneName: 'long',
+  })
+    .formatToParts(date)
+    .find((part) => part.type === 'timeZoneName')?.value
+
+  return {
+    name: zoneName || timeZone,
+    offset: formatOffset(getOffsetMinutes(date, timeZone)),
+  }
+}
+
+function getDayRelation(sourceDate, targetDate, sourceTz, targetTz) {
+  const source = getTimeParts(sourceDate, sourceTz)
+  const target = getTimeParts(targetDate, targetTz)
+  const a = Date.UTC(source.year, source.month - 1, source.day)
+  const b = Date.UTC(target.year, target.month - 1, target.day)
+  const diff = Math.round((b - a) / 86400000)
+
+  if (diff === 0) return 'Same day'
+  if (diff > 0) return 'Next day'
+  return 'Previous day'
+}
+
+function toInputValue(date = new Date()) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hour = String(date.getHours()).padStart(2, '0')
+  const minute = String(date.getMinutes()).padStart(2, '0')
+  return `${year}-${month}-${day}T${hour}:${minute}`
+}
+
+function CityField({ label, value, onChange, onSelect, suggestions, error }) {
+  const [open, setOpen] = useState(false)
+  const boxRef = useRef(null)
+
+  useEffect(() => {
+    const handleClick = (event) => {
+      if (boxRef.current && !boxRef.current.contains(event.target)) {
+        setOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  return (
+    <div className="field" ref={boxRef}>
+      <label>{label}</label>
+      <div className={`input-shell ${error ? 'input-shell-error' : ''}`}>
+        <Search size={18} />
+        <input
+          type="text"
+          value={value}
+          placeholder="Enter a city"
+          onChange={(event) => {
+            onChange(event.target.value)
+            setOpen(true)
+          }}
+          onFocus={() => setOpen(true)}
+        />
+      </div>
+      {error ? <div className="field-error">{error}</div> : null}
+
+      {open && suggestions.length > 0 ? (
+        <div className="suggestions">
+          {suggestions.map((item) => (
+            <button
+              type="button"
+              key={`${item.city}-${item.timeZone}`}
+              onClick={() => {
+                onSelect(item)
+                setOpen(false)
+              }}
+            >
+              <strong>{item.city}</strong>
+              <span>{item.timeZone}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function App() {
+  const [sourceCity, setSourceCity] = useState('Sydney')
+  const [targetCity, setTargetCity] = useState('London')
+  const [sourceDateTime, setSourceDateTime] = useState(toInputValue())
+  const [errors, setErrors] = useState({})
+  const [result, setResult] = useState(null)
+  const [copied, setCopied] = useState(false)
+  const [liveTime, setLiveTime] = useState(new Date())
+
+  useEffect(() => {
+    const timer = setInterval(() => setLiveTime(new Date()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const sourceMatch = useMemo(() => findCity(sourceCity), [sourceCity])
+  const targetMatch = useMemo(() => findCity(targetCity), [targetCity])
+
+  const sourceSuggestions = useMemo(() => getSuggestions(sourceCity), [sourceCity])
+  const targetSuggestions = useMemo(
+    () => getSuggestions(targetCity, sourceMatch?.timeZone),
+    [targetCity, sourceMatch]
+  )
+
+  function validate() {
+    const next = {}
+    const parsed = parseDateTime(sourceDateTime)
+    const source = findCity(sourceCity)
+    const target = findCity(targetCity)
+
+    if (!sourceCity.trim()) next.sourceCity = 'Enter a source city.'
+    else if (!source) next.sourceCity = 'Unknown city. Pick one from the suggestions.'
+
+    if (!targetCity.trim()) next.targetCity = 'Enter a target city.'
+    else if (!target) next.targetCity = 'Unknown city. Pick one from the suggestions.'
+
+    if (!parsed) next.sourceDateTime = 'Choose a valid date and time.'
+
+    if (source && target && source.timeZone === target.timeZone) {
+      next.targetCity = 'Choose a target city in a different timezone.'
+    }
+
+    setErrors(next)
+    return { ok: Object.keys(next).length === 0, source, target, parsed }
+  }
+
+  function convert(event) {
+    event?.preventDefault()
+    setCopied(false)
+
+    const { ok, source, target, parsed } = validate()
+    if (!ok) {
+      setResult(null)
+      return
+    }
+
+    const utcDate = zonedDateTimeToUtc(parsed, source.timeZone)
+    const sourceZone = getZoneName(utcDate, source.timeZone)
+    const targetZone = getZoneName(utcDate, target.timeZone)
+
+    setResult({
+      utcDate,
+      source: {
+        city: source.city,
+        timeZone: source.timeZone,
+        dateTime: formatDateTime(utcDate, source.timeZone),
+        ...sourceZone,
+      },
+      target: {
+        city: target.city,
+        timeZone: target.timeZone,
+        dateTime: formatDateTime(utcDate, target.timeZone),
+        ...targetZone,
+      },
+      dayRelation: getDayRelation(utcDate, utcDate, source.timeZone, target.timeZone),
+    })
+  }
+
+  async function copyResult() {
+    if (!result) return
+    const text = [
+      `${result.source.city}: ${result.source.dateTime}`,
+      `${result.source.name} (${result.source.offset})`,
+      `${result.target.city}: ${result.target.dateTime}`,
+      `${result.target.name} (${result.target.offset})`,
+      `Day relation: ${result.dayRelation}`,
+    ].join('\n')
+
+    await navigator.clipboard.writeText(text)
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1600)
+  }
+
+  function swapCities() {
+    setSourceCity(targetCity)
+    setTargetCity(sourceCity)
+    setResult(null)
+    setErrors({})
+    setCopied(false)
+  }
+
+  return (
+    <div className="app-shell">
+      <main className="container">
+        <section className="hero-card">
+          <div className="hero-copy">
+            <div className="eyebrow">
+              <Globe2 size={16} />
+              World Time Conversion Tool
+            </div>
+            <h1>Convert time between cities worldwide</h1>
+            <p>
+              Enter a city, select the local date and time, and instantly see the equivalent time in
+              another city with daylight saving support, timezone names, UTC offsets, and day-change
+              context.
+            </p>
+          </div>
+
+          <form className="converter-card" onSubmit={convert}>
+            <CityField
+              label="Source city"
+              value={sourceCity}
+              onChange={setSourceCity}
+              onSelect={(item) => {
+                setSourceCity(item.city)
+                setErrors((prev) => ({ ...prev, sourceCity: '' }))
+              }}
+              suggestions={sourceSuggestions}
+              error={errors.sourceCity}
+            />
+
+            <div className="field">
+              <label>Source date and time</label>
+              <div className={`input-shell ${errors.sourceDateTime ? 'input-shell-error' : ''}`}>
+                <Clock3 size={18} />
+                <input
+                  type="datetime-local"
+                  value={sourceDateTime}
+                  onChange={(event) => {
+                    setSourceDateTime(event.target.value)
+                    setErrors((prev) => ({ ...prev, sourceDateTime: '' }))
+                  }}
+                />
+              </div>
+              {errors.sourceDateTime ? <div className="field-error">{errors.sourceDateTime}</div> : null}
+            </div>
+
+            <button className="swap-button" type="button" onClick={swapCities}>
+              <ArrowRightLeft size={18} />
+              Swap cities
+            </button>
+
+            <CityField
+              label="Target city"
+              value={targetCity}
+              onChange={setTargetCity}
+              onSelect={(item) => {
+                setTargetCity(item.city)
+                setErrors((prev) => ({ ...prev, targetCity: '' }))
+              }}
+              suggestions={targetSuggestions}
+              error={errors.targetCity}
+            />
+
+            <button className="primary-button" type="submit">
+              Convert Time
+            </button>
+          </form>
+        </section>
+
+        <section className="panel-grid">
+          <article className="panel result-panel">
+            <div className="panel-header">
+              <div>
+                <h2>Conversion result</h2>
+                <p>Clear scheduling output for meetings, calls, travel, and international work.</p>
+              </div>
+              <button className="secondary-button" type="button" disabled={!result} onClick={copyResult}>
+                {copied ? <Check size={18} /> : <Copy size={18} />}
+                {copied ? 'Copied' : 'Copy result'}
+              </button>
+            </div>
+
+            {!result ? (
+              <div className="empty-state">
+                <Clock3 size={28} />
+                <h3>No conversion yet</h3>
+                <p>Enter both cities and a date/time, then click Convert Time.</p>
+              </div>
+            ) : (
+              <>
+                <div className="result-grid">
+                  <div className="result-card light-card">
+                    <span className="result-label">From</span>
+                    <h3>{result.source.city}</h3>
+                    <p>{result.source.dateTime}</p>
+                    <small>{result.source.name}</small>
+                    <strong>{result.source.offset}</strong>
+                    <span className="timezone-id">{result.source.timeZone}</span>
+                  </div>
+
+                  <div className="result-card dark-card">
+                    <span className="result-label">To</span>
+                    <h3>{result.target.city}</h3>
+                    <p>{result.target.dateTime}</p>
+                    <small>{result.target.name}</small>
+                    <strong>{result.target.offset}</strong>
+                    <span className="timezone-id">{result.target.timeZone}</span>
+                  </div>
+                </div>
+
+                <div className="mini-stats">
+                  <div>
+                    <span>Day relation</span>
+                    <strong>{result.dayRelation}</strong>
+                  </div>
+                  <div>
+                    <span>Source offset</span>
+                    <strong>{result.source.offset}</strong>
+                  </div>
+                  <div>
+                    <span>Target offset</span>
+                    <strong>{result.target.offset}</strong>
+                  </div>
+                </div>
+              </>
+            )}
+          </article>
+
+          <aside className="sidebar-stack">
+            <article className="panel">
+              <div className="panel-header simple-header">
+                <div>
+                  <h2>World clock snapshot</h2>
+                  <p>Current local times for the selected cities.</p>
+                </div>
+              </div>
+
+              <div className="clock-stack">
+                <div className="clock-card">
+                  <span>Source now</span>
+                  <strong>{sourceMatch ? sourceMatch.city : 'Source city'}</strong>
+                  <p>{sourceMatch ? formatClock(liveTime, sourceMatch.timeZone) : '—'}</p>
+                  <small>{sourceMatch ? getZoneName(liveTime, sourceMatch.timeZone).name : '—'}</small>
+                </div>
+                <div className="clock-card">
+                  <span>Target now</span>
+                  <strong>{targetMatch ? targetMatch.city : 'Target city'}</strong>
+                  <p>{targetMatch ? formatClock(liveTime, targetMatch.timeZone) : '—'}</p>
+                  <small>{targetMatch ? getZoneName(liveTime, targetMatch.timeZone).name : '—'}</small>
+                </div>
+              </div>
+            </article>
+
+            <article className="panel">
+              <div className="panel-header simple-header">
+                <div>
+                  <h2>What this version includes</h2>
+                </div>
+              </div>
+              <ul className="feature-list">
+                <li>Responsive Vite + React build</li>
+                <li>Autocomplete suggestions for city names</li>
+                <li>Validation for unknown city names</li>
+                <li>Automatic daylight saving handling</li>
+                <li>Swap cities and copy result actions</li>
+                <li>Timezone names and UTC offsets</li>
+              </ul>
+              <div className="notice-box">
+                <AlertCircle size={18} />
+                <span>Best results come from common city names such as Sydney, London, Tokyo, New York, and Dubai.</span>
+              </div>
+            </article>
+          </aside>
+        </section>
+      </main>
+    </div>
+  )
+}
+
+export default App
